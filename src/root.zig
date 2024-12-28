@@ -14,9 +14,9 @@ pub const Ini = struct {
     };
 
     pub fn init(options: IniOptions) Ini {
-        _ = options;
         return .{
             .buffer = null,
+            .options = options,
         };
     }
 
