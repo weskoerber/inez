@@ -25,11 +25,11 @@ pub const Ini = struct {
         };
     }
 
-    pub fn deinit(self: *Ini, allocator: Allocator) void {
+    pub fn deinit(self: *Ini) void {
         if (self.buffer) |buffer| {
             switch (buffer) {
                 .owned => |owned_buffer| {
-                    allocator.free(owned_buffer);
+                    self.allocator.free(owned_buffer);
                 },
                 else => {},
             }
@@ -83,19 +83,21 @@ pub const Ini = struct {
     /// Parses the internal buffer and produces a `ParsedIni`.
     pub fn parse(self: *Ini) ParseError!ParsedIni {
         var parser = Parser.init(self);
-        const entries = try parser.parse(self.allocator);
+        const entries = try parser.parse();
 
         return ParsedIni{
+            .allocator = self.allocator,
             .entries = entries,
         };
     }
 };
 
 const ParsedIni = struct {
+    allocator: std.mem.Allocator,
     entries: MultiArrayList(IniEntry) = .{},
 
-    pub fn deinit(self: *ParsedIni, allocator: Allocator) void {
-        self.entries.deinit(allocator);
+    pub fn deinit(self: *ParsedIni) void {
+        self.entries.deinit(self.allocator);
     }
 
     const GetValueError = error{NotFound};
@@ -124,11 +126,11 @@ const ParsedIni = struct {
 
     /// Put a new value into the ini. If the section:key already exists, this
     /// method returns an error.
-    pub fn put(self: *ParsedIni, allocator: Allocator, section: []const u8, key: []const u8, value: []const u8) PutValueError!void {
+    pub fn put(self: *ParsedIni, section: []const u8, key: []const u8, value: []const u8) PutValueError!void {
         if (self.get(section, key)) |_| {
             return PutValueError.KeyExists;
         } else |err| switch (err) {
-            GetValueError.NotFound => try self.entries.append(allocator, .{
+            GetValueError.NotFound => try self.entries.append(self.allocator, .{
                 .section = section,
                 .key = key,
                 .value = value,
@@ -139,7 +141,7 @@ const ParsedIni = struct {
     /// Put a new value or update an existing value into the ini. If the
     /// section:key already exists, this function updates the existing key;
     /// otherwise, a new key is added.
-    pub fn putOrUpdate(self: *ParsedIni, allocator: Allocator, section: []const u8, key: []const u8, value: []const u8) Allocator.Error!void {
+    pub fn putOrUpdate(self: *ParsedIni, section: []const u8, key: []const u8, value: []const u8) Allocator.Error!void {
         const sections = self.entries.slice().items(.section);
         const keys = self.entries.slice().items(.key);
         const values = self.entries.slice().items(.value);
@@ -155,7 +157,7 @@ const ParsedIni = struct {
             }
         }
 
-        const result = self.put(allocator, section, key, value);
+        const result = self.put(section, key, value);
 
         std.debug.assert(@TypeOf(result) != PutValueError);
         std.debug.assert(@TypeOf(result) == Allocator.Error);
@@ -171,7 +173,7 @@ const Parser = struct {
     }
 
     const ParseError = error{InvalidCharacter} || Allocator.Error;
-    pub fn parse(self: *Parser, allocator: Allocator) ParseError!MultiArrayList(IniEntry) {
+    pub fn parse(self: *Parser) ParseError!MultiArrayList(IniEntry) {
         var entries = MultiArrayList(IniEntry){};
         const buffer = if (self.ini.buffer) |buffer| switch (buffer) {
             .owned, .borrowed => |b| b,
@@ -205,7 +207,7 @@ const Parser = struct {
                 const val = kv_tok.rest();
 
                 if (maybe_key) |key| {
-                    try entries.append(allocator, .{
+                    try entries.append(self.ini.allocator, .{
                         .section = section,
                         .key = key,
                         .value = val,
@@ -242,12 +244,12 @@ test "single section, single key" {
     ;
 
     {
-        var ini = Ini.init(.{});
-        defer ini.deinit(testing.allocator);
+        var ini = Ini.init(testing.allocator, .{});
+        defer ini.deinit();
 
-        try ini.loadBufferOwned(testing.allocator, data);
-        var parsed = try ini.parse(testing.allocator);
-        defer parsed.deinit(testing.allocator);
+        try ini.loadBufferOwned(data);
+        var parsed = try ini.parse();
+        defer parsed.deinit();
 
         // values are found
         try testing.expectEqualSlices(u8, "world", try parsed.get("main", "hello"));
@@ -258,12 +260,12 @@ test "single section, single key" {
     }
 
     {
-        var ini = Ini.init(.{});
-        defer ini.deinit(testing.allocator);
+        var ini = Ini.init(testing.allocator, .{});
+        defer ini.deinit();
 
         ini.loadBuffer(data);
-        var parsed = try ini.parse(testing.allocator);
-        defer parsed.deinit(testing.allocator);
+        var parsed = try ini.parse();
+        defer parsed.deinit();
 
         // values are found
         try testing.expectEqualSlices(u8, "world", try parsed.get("main", "hello"));
@@ -283,12 +285,12 @@ test "single section, multiple keys" {
     ;
 
     {
-        var ini = Ini.init(.{});
-        defer ini.deinit(testing.allocator);
+        var ini = Ini.init(testing.allocator, .{});
+        defer ini.deinit();
 
-        try ini.loadBufferOwned(testing.allocator, data);
-        var parsed = try ini.parse(testing.allocator);
-        defer parsed.deinit(testing.allocator);
+        try ini.loadBufferOwned(data);
+        var parsed = try ini.parse();
+        defer parsed.deinit();
 
         // values are found
         try testing.expectEqualSlices(u8, "world", try parsed.get("main", "hello"));
@@ -300,12 +302,12 @@ test "single section, multiple keys" {
     }
 
     {
-        var ini = Ini.init(.{});
-        defer ini.deinit(testing.allocator);
+        var ini = Ini.init(testing.allocator, .{});
+        defer ini.deinit();
 
         ini.loadBuffer(data);
-        var parsed = try ini.parse(testing.allocator);
-        defer parsed.deinit(testing.allocator);
+        var parsed = try ini.parse();
+        defer parsed.deinit();
 
         // values are found
         try testing.expectEqualSlices(u8, "world", try parsed.get("main", "hello"));
@@ -325,12 +327,12 @@ test "single section, duplicate key" {
         \\
     ;
     {
-        var ini = Ini.init(.{});
-        defer ini.deinit(testing.allocator);
+        var ini = Ini.init(testing.allocator, .{});
+        defer ini.deinit();
 
-        try ini.loadBufferOwned(testing.allocator, data);
-        var parsed = try ini.parse(testing.allocator);
-        defer parsed.deinit(testing.allocator);
+        try ini.loadBufferOwned(data);
+        var parsed = try ini.parse();
+        defer parsed.deinit();
 
         // values are found
         try testing.expectEqualSlices(u8, "world", try parsed.get("main", "hello"));
@@ -341,12 +343,12 @@ test "single section, duplicate key" {
     }
 
     {
-        var ini = Ini.init(.{});
-        defer ini.deinit(testing.allocator);
+        var ini = Ini.init(testing.allocator, .{});
+        defer ini.deinit();
 
         ini.loadBuffer(data);
-        var parsed = try ini.parse(testing.allocator);
-        defer parsed.deinit(testing.allocator);
+        var parsed = try ini.parse();
+        defer parsed.deinit();
 
         // values are found
         try testing.expectEqualSlices(u8, "world", try parsed.get("main", "hello"));
@@ -367,12 +369,12 @@ test "multiple sections, one key per section" {
     ;
 
     {
-        var ini = Ini.init(.{});
-        defer ini.deinit(testing.allocator);
+        var ini = Ini.init(testing.allocator, .{});
+        defer ini.deinit();
 
-        try ini.loadBufferOwned(testing.allocator, data);
-        var parsed = try ini.parse(testing.allocator);
-        defer parsed.deinit(testing.allocator);
+        try ini.loadBufferOwned(data);
+        var parsed = try ini.parse();
+        defer parsed.deinit();
 
         // values are found
         try testing.expectEqualSlices(u8, "world", try parsed.get("main", "hello"));
@@ -384,12 +386,12 @@ test "multiple sections, one key per section" {
     }
 
     {
-        var ini = Ini.init(.{});
-        defer ini.deinit(testing.allocator);
+        var ini = Ini.init(testing.allocator, .{});
+        defer ini.deinit();
 
         ini.loadBuffer(data);
-        var parsed = try ini.parse(testing.allocator);
-        defer parsed.deinit(testing.allocator);
+        var parsed = try ini.parse();
+        defer parsed.deinit();
 
         // values are found
         try testing.expectEqualSlices(u8, "world", try parsed.get("main", "hello"));
@@ -411,12 +413,12 @@ test "multiple sections, duplicate key in different sections" {
     ;
 
     {
-        var ini = Ini.init(.{});
-        defer ini.deinit(testing.allocator);
+        var ini = Ini.init(testing.allocator, .{});
+        defer ini.deinit();
 
-        try ini.loadBufferOwned(testing.allocator, data);
-        var parsed = try ini.parse(testing.allocator);
-        defer parsed.deinit(testing.allocator);
+        try ini.loadBufferOwned(data);
+        var parsed = try ini.parse();
+        defer parsed.deinit();
 
         // values are found
         try testing.expectEqualSlices(u8, "world", try parsed.get("main", "hello"));
@@ -428,12 +430,12 @@ test "multiple sections, duplicate key in different sections" {
     }
 
     {
-        var ini = Ini.init(.{});
-        defer ini.deinit(testing.allocator);
+        var ini = Ini.init(testing.allocator, .{});
+        defer ini.deinit();
 
         ini.loadBuffer(data);
-        var parsed = try ini.parse(testing.allocator);
-        defer parsed.deinit(testing.allocator);
+        var parsed = try ini.parse();
+        defer parsed.deinit();
 
         // values are found
         try testing.expectEqualSlices(u8, "world", try parsed.get("main", "hello"));
@@ -453,12 +455,12 @@ test "empty section" {
         \\
     ;
 
-    var ini = Ini.init(.{});
-    defer ini.deinit(testing.allocator);
+    var ini = Ini.init(testing.allocator, .{});
+    defer ini.deinit();
 
     ini.loadBuffer(data);
-    var parsed = try ini.parse(testing.allocator);
-    defer parsed.deinit(testing.allocator);
+    var parsed = try ini.parse();
+    defer parsed.deinit();
 
     // values are found
     try testing.expectEqualSlices(u8, "world", try parsed.get("extra", "hello"));
@@ -469,12 +471,12 @@ test "empty section" {
 }
 
 test "chat-gippity file" {
-    var ini = Ini.init(.{});
-    defer ini.deinit(testing.allocator);
+    var ini = Ini.init(testing.allocator, .{});
+    defer ini.deinit();
 
-    try ini.loadFile(testing.allocator, "samples/chat-gippity.ini");
-    var parsed = try ini.parse(testing.allocator);
-    defer parsed.deinit(testing.allocator);
+    try ini.loadFile("samples/chat-gippity.ini");
+    var parsed = try ini.parse();
+    defer parsed.deinit();
 
     // values are found
     try testing.expectEqualSlices(u8, "60", try parsed.get("Experimentation", "TestDuration"));
@@ -486,15 +488,15 @@ test "chat-gippity file" {
 }
 
 test "chat-gippity stream" {
-    var ini = Ini.init(.{});
-    defer ini.deinit(testing.allocator);
+    var ini = Ini.init(testing.allocator, .{});
+    defer ini.deinit();
 
     const file = try std.fs.cwd().openFile("samples/chat-gippity.ini", .{});
     defer file.close();
 
-    try ini.loadStream(testing.allocator, file.reader());
-    var parsed = try ini.parse(testing.allocator);
-    defer parsed.deinit(testing.allocator);
+    try ini.loadStream(file.reader());
+    var parsed = try ini.parse();
+    defer parsed.deinit();
 
     // values are found
     try testing.expectEqualSlices(u8, "60", try parsed.get("Experimentation", "TestDuration"));
@@ -506,14 +508,14 @@ test "chat-gippity stream" {
 }
 
 test "put" {
-    var ini = Ini.init(.{});
-    defer ini.deinit(testing.allocator);
+    var ini = Ini.init(testing.allocator, .{});
+    defer ini.deinit();
 
-    var parsed = try ini.parse(testing.allocator);
-    defer parsed.deinit(testing.allocator);
+    var parsed = try ini.parse();
+    defer parsed.deinit();
 
-    try parsed.put(testing.allocator, "new", "hello", "world");
-    try testing.expectError(ParsedIni.PutValueError.KeyExists, parsed.put(testing.allocator, "new", "hello", "world"));
+    try parsed.put("new", "hello", "world");
+    try testing.expectError(ParsedIni.PutValueError.KeyExists, parsed.put("new", "hello", "world"));
 
     // values are found
     try testing.expectEqualSlices(u8, "world", try parsed.get("new", "hello"));
@@ -523,18 +525,18 @@ test "put" {
 }
 
 test "putOrUpdate" {
-    var ini = Ini.init(.{});
-    defer ini.deinit(testing.allocator);
+    var ini = Ini.init(testing.allocator, .{});
+    defer ini.deinit();
 
-    var parsed = try ini.parse(testing.allocator);
-    defer parsed.deinit(testing.allocator);
+    var parsed = try ini.parse();
+    defer parsed.deinit();
 
-    try parsed.put(testing.allocator, "new", "hello", "world");
-    try parsed.putOrUpdate(testing.allocator, "new", "hello", "world!!!");
+    try parsed.put("new", "hello", "world");
+    try parsed.putOrUpdate("new", "hello", "world!!!");
 
     // values are found
     try testing.expectEqualSlices(u8, "world!!!", try parsed.get("new", "hello"));
-    try testing.expectError(ParsedIni.PutValueError.KeyExists, parsed.put(testing.allocator, "new", "hello", "world"));
+    try testing.expectError(ParsedIni.PutValueError.KeyExists, parsed.put("new", "hello", "world"));
 
     // values are not found
     try testing.expectError(ParsedIni.GetValueError.NotFound, parsed.get("no_section", "hello"));

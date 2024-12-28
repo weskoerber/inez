@@ -14,12 +14,12 @@ pub fn main() !void {
     const section = args[2];
     const key = args[3];
 
-    var ini = inez.Ini.init(.{});
-    defer ini.deinit(allocator);
+    var ini = inez.Ini.init(allocator, .{});
+    defer ini.deinit();
 
-    try ini.loadFile(allocator, path);
-    var parsed_ini = try ini.parse(allocator);
-    defer parsed_ini.deinit(allocator);
+    try ini.loadFile(path);
+    var parsed_ini = try ini.parse();
+    defer parsed_ini.deinit();
 
     const value = try parsed_ini.get(section, key);
 
