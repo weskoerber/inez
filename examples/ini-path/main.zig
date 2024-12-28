@@ -7,6 +7,7 @@ pub fn main() !void {
     defer std.process.argsFree(allocator, args);
 
     if (args.len != 4) {
+        std.debug.print("usage: {s} <path> <section> <key>\n", .{std.fs.path.basename(args[0])});
         return error.InvalidArguments;
     }
 
