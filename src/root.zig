@@ -1,5 +1,9 @@
 pub const Ini = struct {
-    /// An internal buffer holding raw ini data
+    /// An allocator that will be used for methods that need to allocate and
+    /// free owned memory.
+    allocator: std.mem.Allocator,
+
+    /// An internal buffer holding raw ini data.
     buffer: ?union(enum) {
         owned: []const u8,
         borrowed: []const u8,
@@ -13,8 +17,9 @@ pub const Ini = struct {
         max_read_size: usize = 10 * 1024 * 1024,
     };
 
-    pub fn init(options: IniOptions) Ini {
+    pub fn init(allocator: std.mem.Allocator, options: IniOptions) Ini {
         return .{
+            .allocator = allocator,
             .buffer = null,
             .options = options,
         };
@@ -44,8 +49,8 @@ pub const Ini = struct {
 
     /// Load a buffer. Does not take ownership of the memory. This method copies the
     /// buffer into the internal buffer.
-    pub fn loadBufferOwned(self: *Ini, allocator: Allocator, buffer: []const u8) LoadBufferError!void {
-        const buffer_copy = try allocator.dupe(u8, buffer);
+    pub fn loadBufferOwned(self: *Ini, buffer: []const u8) LoadBufferError!void {
+        const buffer_copy = try self.allocator.dupe(u8, buffer);
         self.buffer = .{ .owned = buffer_copy };
     }
 
@@ -53,14 +58,14 @@ pub const Ini = struct {
 
     /// Load a file. This method reads the entire file (up to
     /// `IniOptions.max_read_size`) and copies it to the the internal buffer.
-    pub fn loadFile(self: *Ini, allocator: Allocator, path: []const u8) LoadFileError!void {
+    pub fn loadFile(self: *Ini, path: []const u8) LoadFileError!void {
         const file = try if (std.fs.path.isAbsolute(path))
             std.fs.openFileAbsolute(path, .{})
         else
             std.fs.cwd().openFile(path, .{});
         defer file.close();
 
-        const buffer_copy = try file.readToEndAlloc(allocator, self.options.max_read_size);
+        const buffer_copy = try file.readToEndAlloc(self.allocator, self.options.max_read_size);
         self.buffer = .{ .owned = buffer_copy };
     }
 
@@ -68,17 +73,17 @@ pub const Ini = struct {
 
     /// Load a stream. This method reads the entire stream (up to
     /// `IniOptions.max_read_size`) and copies it to the the internal buffer.
-    pub fn loadStream(self: *Ini, allocator: Allocator, stream: anytype) LoadStreamError!void {
-        const buffer_copy = try stream.readAllAlloc(allocator, self.options.max_read_size);
+    pub fn loadStream(self: *Ini, stream: anytype) LoadStreamError!void {
+        const buffer_copy = try stream.readAllAlloc(self.allocator, self.options.max_read_size);
         self.buffer = .{ .owned = buffer_copy };
     }
 
     const ParseError = error{} || Parser.ParseError;
 
     /// Parses the internal buffer and produces a `ParsedIni`.
-    pub fn parse(self: *Ini, allocator: Allocator) ParseError!ParsedIni {
+    pub fn parse(self: *Ini) ParseError!ParsedIni {
         var parser = Parser.init(self);
-        const entries = try parser.parse(allocator);
+        const entries = try parser.parse(self.allocator);
 
         return ParsedIni{
             .entries = entries,
