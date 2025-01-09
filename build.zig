@@ -1,4 +1,4 @@
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -31,7 +31,7 @@ pub fn build(b: *std.Build) void {
             .name = @tagName(example_option),
             .root_source_file = b.path(b.fmt("examples/{s}/main.zig", .{@tagName(example_option)})),
             .target = target,
-            .optimize = optimize,
+            .optimize = .ReleaseFast,
         });
         example_exe.root_module.addImport("inez", inez);
 
@@ -43,6 +43,39 @@ pub fn build(b: *std.Build) void {
         }
 
         b.installArtifact(example_exe);
+    }
+
+    // benchmark
+    {
+        const wf = b.addWriteFiles();
+        const ini_file = wf.addCopyFile(b.path("samples/chat-gippity.ini"), "chat-gippity.ini");
+
+        const bench_exe = b.addExecutable(.{
+            .name = "inez-bench",
+            .root_source_file = b.path("bench/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        bench_exe.root_module.addImport("inez", inez);
+        bench_exe.root_module.addAnonymousImport("ini_path", .{
+            .root_source_file = ini_file,
+        });
+
+        const run_bench = b.addSystemCommand(&.{"poop"});
+        run_bench.addArtifactArg(bench_exe);
+        if (b.args) |args| {
+            run_bench.addArgs(args);
+        }
+        // const run_bench = b.addRunArtifact(bench_exe);
+
+        const bench_step = b.step("bench", "Run the benchmarks");
+
+        bench_exe.step.dependOn(&wf.step);
+
+        run_bench.step.dependOn(&bench_exe.step);
+        run_bench.step.dependOn(&wf.step);
+
+        bench_step.dependOn(&run_bench.step);
     }
 
     // docs
