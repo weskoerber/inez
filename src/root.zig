@@ -10,14 +10,14 @@ pub const Ini = struct {
     },
 
     /// Options for reading, writing, parsing, etc.
-    options: IniOptions = .{},
+    options: ReadOptions = .{},
 
-    const IniOptions = struct {
+    const ReadOptions = struct {
         /// The max size (in bytes) to read (default: 10MiB)
         max_read_size: usize = 10 * 1024 * 1024,
     };
 
-    pub fn init(allocator: std.mem.Allocator, options: IniOptions) Ini {
+    pub fn init(allocator: std.mem.Allocator, options: ReadOptions) Ini {
         return .{
             .allocator = allocator,
             .buffer = null,
@@ -81,8 +81,8 @@ pub const Ini = struct {
     const ParseError = error{} || Parser.ParseError;
 
     /// Parses the internal buffer and produces a `ParsedIni`.
-    pub fn parse(self: *Ini) ParseError!ParsedIni {
-        var parser = Parser.init(self);
+    pub fn parse(self: *Ini, options: Parser.Options) ParseError!ParsedIni {
+        var parser = Parser.init(self, options);
         const entries = try parser.parse();
 
         return ParsedIni{
@@ -168,11 +168,39 @@ const ParsedIni = struct {
 
 const Parser = struct {
     ini: *Ini,
-    pub fn init(ini: *Ini) Parser {
-        return .{ .ini = ini };
+    options: Options,
+
+    const Options = struct {
+        /// Allowed characters that indicate comments. Each individual character
+        /// in this string will be considered as a comment. For example, the
+        /// following comments the first two lines of `MySection`, while the
+        /// third line is uncommented:
+        /// ```ini
+        /// [MySection]
+        /// ; Address = 192.168.0.1
+        /// # Port = 8080
+        /// LogsDir = /var/log/SuperApp
+        /// ```
+        comment_chars: []const u8 = ";",
+
+        /// Controls how the parser identifies comments. By default, comments
+        /// must be on their own line. When this option is enabled, comments may
+        /// be inline, and everything after a character included in
+        /// `comment_chars` is ignored. For example, when this is enabled, the
+        /// key `foo` will have the value `bar`, and `baz` is ignored:
+        /// ```ini
+        /// [MySection]
+        /// foo = bar ; baz
+        /// ```
+        allow_inline_comments: bool = false,
+    };
+
+    pub fn init(ini: *Ini, options: Options) Parser {
+        return .{ .ini = ini, .options = options };
     }
 
     const ParseError = error{InvalidCharacter} || Allocator.Error;
+
     pub fn parse(self: *Parser) ParseError!MultiArrayList(IniEntry) {
         var entries = MultiArrayList(IniEntry){};
         const buffer = if (self.ini.buffer) |buffer| switch (buffer) {
@@ -192,11 +220,13 @@ const Parser = struct {
 
             // sections
             if (line[0] == '[') {
-                if (line[0] != '[' or line[line.len - 1] != ']') {
+                if (std.mem.indexOfScalar(u8, line, ']')) |pos| {
+                    current_section = line[1..pos];
+                } else {
+                    // TODO: make this its own error
                     return ParseError.InvalidCharacter;
                 }
 
-                current_section = line[1 .. line.len - 1];
                 continue;
             }
 
@@ -204,7 +234,13 @@ const Parser = struct {
             if (current_section) |section| {
                 var kv_tok = std.mem.tokenizeScalar(u8, line, '=');
                 const maybe_key = kv_tok.next();
-                const val = kv_tok.rest();
+                var val = kv_tok.rest();
+
+                if (self.options.allow_inline_comments) {
+                    if (std.mem.indexOfAny(u8, kv_tok.rest(), self.options.comment_chars)) |pos| {
+                        val = kv_tok.rest()[0..pos];
+                    }
+                }
 
                 if (maybe_key) |key| {
                     try entries.append(self.ini.allocator, .{
@@ -248,7 +284,7 @@ test "single section, single key" {
         defer ini.deinit();
 
         try ini.loadBufferOwned(data);
-        var parsed = try ini.parse();
+        var parsed = try ini.parse(.{});
         defer parsed.deinit();
 
         // values are found
@@ -264,7 +300,7 @@ test "single section, single key" {
         defer ini.deinit();
 
         ini.loadBuffer(data);
-        var parsed = try ini.parse();
+        var parsed = try ini.parse(.{});
         defer parsed.deinit();
 
         // values are found
@@ -289,7 +325,7 @@ test "single section, multiple keys" {
         defer ini.deinit();
 
         try ini.loadBufferOwned(data);
-        var parsed = try ini.parse();
+        var parsed = try ini.parse(.{});
         defer parsed.deinit();
 
         // values are found
@@ -306,7 +342,7 @@ test "single section, multiple keys" {
         defer ini.deinit();
 
         ini.loadBuffer(data);
-        var parsed = try ini.parse();
+        var parsed = try ini.parse(.{});
         defer parsed.deinit();
 
         // values are found
@@ -331,7 +367,7 @@ test "single section, duplicate key" {
         defer ini.deinit();
 
         try ini.loadBufferOwned(data);
-        var parsed = try ini.parse();
+        var parsed = try ini.parse(.{});
         defer parsed.deinit();
 
         // values are found
@@ -347,7 +383,7 @@ test "single section, duplicate key" {
         defer ini.deinit();
 
         ini.loadBuffer(data);
-        var parsed = try ini.parse();
+        var parsed = try ini.parse(.{});
         defer parsed.deinit();
 
         // values are found
@@ -373,7 +409,7 @@ test "multiple sections, one key per section" {
         defer ini.deinit();
 
         try ini.loadBufferOwned(data);
-        var parsed = try ini.parse();
+        var parsed = try ini.parse(.{});
         defer parsed.deinit();
 
         // values are found
@@ -390,7 +426,7 @@ test "multiple sections, one key per section" {
         defer ini.deinit();
 
         ini.loadBuffer(data);
-        var parsed = try ini.parse();
+        var parsed = try ini.parse(.{});
         defer parsed.deinit();
 
         // values are found
@@ -417,7 +453,7 @@ test "multiple sections, duplicate key in different sections" {
         defer ini.deinit();
 
         try ini.loadBufferOwned(data);
-        var parsed = try ini.parse();
+        var parsed = try ini.parse(.{});
         defer parsed.deinit();
 
         // values are found
@@ -434,7 +470,7 @@ test "multiple sections, duplicate key in different sections" {
         defer ini.deinit();
 
         ini.loadBuffer(data);
-        var parsed = try ini.parse();
+        var parsed = try ini.parse(.{});
         defer parsed.deinit();
 
         // values are found
@@ -459,7 +495,7 @@ test "empty section" {
     defer ini.deinit();
 
     ini.loadBuffer(data);
-    var parsed = try ini.parse();
+    var parsed = try ini.parse(.{});
     defer parsed.deinit();
 
     // values are found
@@ -475,7 +511,7 @@ test "chat-gippity file" {
     defer ini.deinit();
 
     try ini.loadFile("samples/chat-gippity.ini");
-    var parsed = try ini.parse();
+    var parsed = try ini.parse(.{});
     defer parsed.deinit();
 
     // values are found
@@ -495,7 +531,7 @@ test "chat-gippity stream" {
     defer file.close();
 
     try ini.loadStream(file.reader());
-    var parsed = try ini.parse();
+    var parsed = try ini.parse(.{});
     defer parsed.deinit();
 
     // values are found
@@ -511,7 +547,7 @@ test "put" {
     var ini = Ini.init(testing.allocator, .{});
     defer ini.deinit();
 
-    var parsed = try ini.parse();
+    var parsed = try ini.parse(.{});
     defer parsed.deinit();
 
     try parsed.put("new", "hello", "world");
@@ -528,7 +564,7 @@ test "putOrUpdate" {
     var ini = Ini.init(testing.allocator, .{});
     defer ini.deinit();
 
-    var parsed = try ini.parse();
+    var parsed = try ini.parse(.{});
     defer parsed.deinit();
 
     try parsed.put("new", "hello", "world");
@@ -540,4 +576,54 @@ test "putOrUpdate" {
 
     // values are not found
     try testing.expectError(ParsedIni.GetValueError.NotFound, parsed.get("no_section", "hello"));
+}
+
+test "trailing comments" {
+    const data =
+        \\[main] ; ignore this
+        \\hello=world ; ignore this
+        \\[extra] technically this data is ignored as well
+        \\num=42 ; ignore this
+        \\
+    ;
+
+    var ini = Ini.init(testing.allocator, .{});
+    defer ini.deinit();
+
+    try ini.loadBufferOwned(data);
+    var parsed = try ini.parse(.{ .allow_inline_comments = true });
+    defer parsed.deinit();
+
+    // values are found
+    try testing.expectEqualSlices(u8, "world", try parsed.get("main", "hello"));
+    try testing.expectEqualSlices(u8, "42", try parsed.get("extra", "num"));
+
+    // values are not found
+    try testing.expectError(ParsedIni.GetValueError.NotFound, parsed.get("no_section", "hello"));
+    try testing.expectError(ParsedIni.GetValueError.NotFound, parsed.get("main", "no_key"));
+}
+
+test "comment chars" {
+    const data =
+        \\[main] # ignore this
+        \\hello=world # ignore this
+        \\[extra] technically this data is ignored as well
+        \\num=42 # ignore this
+        \\
+    ;
+
+    var ini = Ini.init(testing.allocator, .{});
+    defer ini.deinit();
+
+    try ini.loadBufferOwned(data);
+    var parsed = try ini.parse(.{ .allow_inline_comments = true, .comment_chars = "#" });
+    defer parsed.deinit();
+
+    // values are found
+    try testing.expectEqualSlices(u8, "world", try parsed.get("main", "hello"));
+    try testing.expectEqualSlices(u8, "42", try parsed.get("extra", "num"));
+
+    // values are not found
+    try testing.expectError(ParsedIni.GetValueError.NotFound, parsed.get("no_section", "hello"));
+    try testing.expectError(ParsedIni.GetValueError.NotFound, parsed.get("main", "no_key"));
 }
