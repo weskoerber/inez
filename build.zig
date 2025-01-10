@@ -49,7 +49,7 @@ pub fn build(b: *std.Build) !void {
     {
         const bench_step = b.step("bench", "Run the benchmarks");
 
-        if (b.findProgram(&.{"poop"}, &.{})) |_| {
+        if (b.findProgram(&.{"poop"}, &.{}) catch b.findProgram(&.{"hyperfine"}, &.{})) |path| {
             const wf = b.addWriteFiles();
             const ini_file = wf.addCopyFile(b.path("samples/chat-gippity.ini"), "chat-gippity.ini");
 
@@ -64,7 +64,7 @@ pub fn build(b: *std.Build) !void {
                 .root_source_file = ini_file,
             });
 
-            const run_bench = b.addSystemCommand(&.{"poop"});
+            const run_bench = b.addSystemCommand(&.{path});
             run_bench.addArtifactArg(bench_exe);
             if (b.args) |args| {
                 run_bench.addArgs(args);
@@ -79,9 +79,7 @@ pub fn build(b: *std.Build) !void {
             bench_step.dependOn(&run_bench.step);
         } else |err| {
             bench_step.addError(
-                \\unable to find 'poop' ({s})
-                \\note: download 'poop' from: https://github.com/andrewrk/poop
-                \\note: if you've already downloaded and built it, make sure it's on your PATH
+                \\unable to find benchmark runner: {s} (tried 'poop', 'hyperfine')
             , .{@errorName(err)}) catch @panic("OOM");
         }
     }
