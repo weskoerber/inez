@@ -21,28 +21,82 @@ pub fn build(b: *std.Build) void {
 
     test_step.dependOn(&run_lib_test.step);
 
+    // ffi
+    const ffi_static = b.addStaticLibrary(.{
+        .name = "inez",
+        .root_source_file = b.path("src/ffi.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const ffi_shared = b.addSharedLibrary(.{
+        .name = "inez",
+        .root_source_file = b.path("src/ffi.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    ffi_static.root_module.addImport("inez", inez);
+    ffi_shared.root_module.addImport("inez", inez);
+
+    const ffi_step = b.step("ffi", "Build FFI (C) bindings");
+    const ffi_install_static = b.addInstallArtifact(ffi_static, .{});
+    const ffi_install_shared = b.addInstallArtifact(ffi_shared, .{});
+
+    ffi_step.dependOn(&ffi_install_static.step);
+    ffi_step.dependOn(&ffi_install_shared.step);
+
+    b.getInstallStep().dependOn(&ffi_install_static.step);
+    b.getInstallStep().dependOn(&ffi_install_shared.step);
+
     // examples
     {
-        const Example = enum { @"ini-path" };
-        const example_step = b.step("example", "Run an example");
-        const example_option = b.option(Example, "example", "An example name to run with the `example` step (default: chat-gippity)") orelse Example.@"ini-path";
+        const Example = enum { @"ini-path", @"ffi-c" };
 
-        const example_exe = b.addExecutable(.{
-            .name = @tagName(example_option),
-            .root_source_file = b.path(b.fmt("examples/{s}/main.zig", .{@tagName(example_option)})),
-            .target = target,
-            .optimize = optimize,
-        });
-        example_exe.root_module.addImport("inez", inez);
+        inline for (std.meta.fields(Example)) |field| {
+            const example: Example = @enumFromInt(field.value);
+            const example_name = field.name;
+            const example_step = b.step("run-" ++ example_name, "Run the " ++ example_name ++ " example");
 
-        const run_example_exe = b.addRunArtifact(example_exe);
-        example_step.dependOn(&run_example_exe.step);
+            const example_exe = switch (example) {
+                .@"ini-path" => b: {
+                    const example_exe = b.addExecutable(.{
+                        .name = example_name,
+                        .root_source_file = b.path(b.fmt("examples/{s}/main.zig", .{example_name})),
+                        .target = target,
+                        .optimize = .ReleaseFast,
+                    });
+                    example_exe.root_module.addImport("inez", inez);
 
-        if (b.args) |args| {
-            run_example_exe.addArgs(args);
+                    break :b example_exe;
+                },
+                .@"ffi-c" => b: {
+                    const example_exe = b.addExecutable(.{
+                        .name = example_name,
+                        .target = target,
+                        .optimize = .ReleaseFast,
+                        .link_libc = true,
+                    });
+
+                    example_exe.addIncludePath(b.path("include"));
+                    example_exe.addCSourceFile(.{ .file = b.path(b.fmt("examples/{s}/main.c", .{example_name})) });
+                    example_exe.linkLibrary(ffi_static);
+
+                    break :b example_exe;
+                },
+            };
+
+            const run_example_exe = b.addRunArtifact(example_exe);
+            example_step.dependOn(&run_example_exe.step);
+
+            if (b.args) |args| {
+                run_example_exe.addArgs(args);
+            }
+
+            const install_example_exe = b.addInstallArtifact(example_exe, .{ .dest_dir = .{ .override = .{ .custom = "bin/examples" } } });
+            b.getInstallStep().dependOn(&install_example_exe.step);
         }
-
-        b.installArtifact(example_exe);
     }
 
     // docs
