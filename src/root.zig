@@ -92,7 +92,7 @@ pub const Ini = struct {
     }
 };
 
-const ParsedIni = struct {
+pub const ParsedIni = struct {
     allocator: std.mem.Allocator,
     entries: MultiArrayList(IniEntry) = .{},
 
