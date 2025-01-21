@@ -19,7 +19,7 @@ pub fn main() !void {
     defer ini.deinit();
 
     try ini.loadFile(path);
-    var parsed_ini = try ini.parse();
+    var parsed_ini = try ini.parse(.{});
     defer parsed_ini.deinit();
 
     const value = try parsed_ini.get(section, key);
